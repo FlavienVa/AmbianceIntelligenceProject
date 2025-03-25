@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>Arduino Nano33 Sensor Monitor</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #333;
+        }
+
+        .control-panel {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f0f0f0;
+            border-radius: 8px;
+        }
+
+        button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        #status {
+            font-weight: bold;
+            margin: 15px 0;
+        }
+
+        .sensor-display {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 30px;
+        }
+
+        .sensor-card {
+            width: 30%;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+
+        .sensor-value {
+            font-size: 2em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+
+        .temperature {
+            background-color: #ffebee;
+        }
+
+        .humidity {
+            background-color: #e3f2fd;
+        }
+
+        .soil-moisture {
+            background-color: #e8f5e9;
+        }
+
+        .chart-container {
+            margin-top: 30px;
+            height: 300px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>Arduino Nano33 Sensor Monitor</h1>
+
+        <div class="control-panel">
+            <button onclick="connect()">🔌 Connect</button>
+            <button onclick="send('ON')">💡 Turn ON</button>
+            <button onclick="send('OFF')">🌑 Turn OFF</button>
+            <p id="status">Status: Not connected</p>
+        </div>
+
+        <div class="sensor-display">
+            <div class="sensor-card temperature">
+                <h3>Temperature</h3>
+                <div class="sensor-value" id="temperature">--</div>
+                <div class="sensor-unit">°C</div>
+            </div>
+
+            <div class="sensor-card humidity">
+                <h3>Humidity</h3>
+                <div class="sensor-value" id="humidity">--</div>
+                <div class="sensor-unit">%</div>
+            </div>
+
+            <div class="sensor-card soil-moisture">
+                <h3>Soil Moisture</h3>
+                <div class="sensor-value" id="soil-moisture">--</div>
+                <div class="sensor-unit">Raw value</div>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <canvas id="sensorChart"></canvas>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        // BLE characteristics
+        let ledCharacteristic;
+        let sensorCharacteristic;
+
+        // Chart data and configuration
+        const maxDataPoints = 20;
+        let temperatureData = [];
+        let humidityData = [];
+        let soilMoistureData = [];
+        let labels = [];
+
+        // Initialize chart
+        const ctx = document.getElementById('sensorChart').getContext('2d');
+        const sensorChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Temperature (°C)',
+                        data: temperatureData,
+                        borderColor: 'rgb(255, 99, 132)',
+                        backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                        tension: 0.3,
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Humidity (%)',
+                        data: humidityData,
+                        borderColor: 'rgb(54, 162, 235)',
+                        backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                        tension: 0.3,
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Soil Moisture',
+                        data: soilMoistureData,
+                        borderColor: 'rgb(75, 192, 192)',
+                        backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                        tension: 0.3,
+                        yAxisID: 'y1'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
+                scales: {
+                    y: {
+                        type: 'linear',
+                        display: true,
+                        position: 'left',
+                        title: {
+                            display: true,
+                            text: 'Temperature (°C) / Humidity (%)'
+                        }
+                    },
+                    y1: {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        title: {
+                            display: true,
+                            text: 'Soil Moisture'
+                        },
+                        grid: {
+                            drawOnChartArea: false,
+                        },
+                    }
+                }
+            }
+        });
+
+        async function connect() {
+            try {
+                document.getElementById("status").innerText = "Status: Connecting...";
+
+                const device = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
+                    optionalServices: [
+                        '19b10002-e8f2-537e-4f6c-d104768a1214',  // LED service
+                        '19b10003-e8f2-537e-4f6c-d104768a1214'   // Sensor service
+                    ]
+                });
+
+                const server = await device.gatt.connect();
+
+                // Get LED service and characteristic
+                const ledService = await server.getPrimaryService('19b10002-e8f2-537e-4f6c-d104768a1214');
+                ledCharacteristic = await ledService.getCharacteristic('19b10012-e8f2-537e-4f6c-d104768a1214');
+
+                // Get sensor service and characteristic
+                const sensorService = await server.getPrimaryService('19b10003-e8f2-537e-4f6c-d104768a1214');
+                sensorCharacteristic = await sensorService.getCharacteristic('19b10013-e8f2-537e-4f6c-d104768a1214');
+
+                // Start notifications for sensor data
+                await sensorCharacteristic.startNotifications();
+                sensorCharacteristic.addEventListener('characteristicvaluechanged', handleSensorData);
+
+                document.getElementById("status").innerText = "Status: Connected ✅";
+                console.log("Connected to Arduino Nano33");
+            } catch (e) {
+                console.error(e);
+                document.getElementById("status").innerText = "Status: Error ❌ " + e.message;
+            }
+        }
+
+        async function send(value) {
+            if (!ledCharacteristic) {
+                alert("Please connect to the device first!");
+                return;
+            }
+
+            try {
+                await ledCharacteristic.writeValue(new TextEncoder().encode(value));
+                console.log("Sent:", value);
+            } catch (error) {
+                console.error("Error sending command:", error);
+                document.getElementById("status").innerText = "Status: Send Error ❌";
+            }
+        }
+
+        function handleSensorData(event) {
+            const decoder = new TextDecoder('utf-8');
+            const value = decoder.decode(event.target.value);
+
+            try {
+                // Parse the JSON data
+                const sensorData = JSON.parse(value);
+
+                // Update the displayed values
+                document.getElementById("temperature").innerText = sensorData.temp.toFixed(1);
+                document.getElementById("humidity").innerText = sensorData.hum.toFixed(1);
+                document.getElementById("soil-moisture").innerText = sensorData.soil;
+
+                // Add timestamp
+                const now = new Date();
+                const timeString = now.getHours().toString().padStart(2, '0') + ':' +
+                    now.getMinutes().toString().padStart(2, '0') + ':' +
+                    now.getSeconds().toString().padStart(2, '0');
+
+                // Update chart data
+                labels.push(timeString);
+                temperatureData.push(sensorData.temp);
+                humidityData.push(sensorData.hum);
+                soilMoistureData.push(sensorData.soil);
+
+                // Limit the number of data points
+                if (labels.length > maxDataPoints) {
+                    labels.shift();
+                    temperatureData.shift();
+                    humidityData.shift();
+                    soilMoistureData.shift();
+                }
+
+                // Update the chart
+                sensorChart.update();
+
+            } catch (error) {
+                console.error("Error parsing sensor data:", error, value);
+            }
+        }
+
+        // Handle disconnection
+        window.addEventListener('beforeunload', async () => {
+            if (sensorCharacteristic) {
+                try {
+                    await sensorCharacteristic.stopNotifications();
+                } catch (e) {
+                    console.log("Error stopping notifications:", e);
+                }
+            }
+        });
+    </script>
+</body>
+
+</html>
