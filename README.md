@@ -20,3 +20,7 @@ For this project the main composant are :
 - Nicla Vision
 
 The rest of the material is detailed in the full report.
+
+### Completed project pictures
+
+![Completed Grow Box](img/img1.jpeg)
