@@ -23,4 +23,4 @@ The rest of the material is detailed in the full report.
 
 ### Completed project pictures
 
-![Completed Grow Box](img/img1.jpeg)
+![Completed Grow Box](img/img1.JPEG)
